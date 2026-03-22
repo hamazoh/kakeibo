@@ -425,11 +425,11 @@
   }
 
   async function apiPost(payload) {
-    const res = await fetch(API_URL, {
+    await fetch(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      redirect: 'follow'
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'data=' + encodeURIComponent(JSON.stringify(payload)),
     });
     await new Promise(resolve => setTimeout(resolve, 1500));
   }
