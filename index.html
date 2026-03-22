@@ -314,6 +314,33 @@
     #app {
       position: relative;
     }
+
+    /* ローディング */
+    .loading-overlay {
+      display: none;
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      min-height: 100%;
+      background: rgba(255,255,255,0.7);
+      justify-content: center;
+      align-items: flex-start;
+      padding-top: 160px;
+      z-index: 150;
+    }
+
+    .loading-overlay.active { display: flex; }
+
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 4px solid #ddd;
+      border-top-color: #185FA5;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -353,6 +380,11 @@
     <button class="btn-copy" id="btn-copy">エクセル用コピー</button>
   </div>
 
+  <!-- ローディング -->
+  <div class="loading-overlay" id="loading-overlay">
+    <div class="spinner"></div>
+  </div>
+
   <!-- 確認ダイアログ -->
   <div class="overlay" id="overlay">
     <div class="dialog">
@@ -371,42 +403,54 @@
 <div class="toast" id="toast"></div>
 
 <script>
-  const STORAGE_KEY = 'kakeibo_v1';
+  const API_URL = 'https://script.google.com/macros/s/AKfycbycNsvJQ9KZkEp22_dySkuUDuaBDEE7wFReKE7mUC_qti_Cj929-82Huj32RN6IbDxZuA/exec';
 
-  // --- データ操作 ---
-  function loadData() {
-    try {
-      return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
-    } catch { return []; }
+  // インメモリキャッシュ
+  let cachedData = [];
+
+  // --- API ---
+  async function apiGet() {
+    const res = await fetch(API_URL);
+    if (!res.ok) throw new Error(`GET failed: ${res.status}`);
+    return res.json(); // [{key, date, item, amounts: [...]}, ...]
   }
 
-  function saveData(data) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  function apiPost(payload) {
+    return fetch(API_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
   }
 
-  // マージキー: "YYYY-MM_項目名"
+  // --- ローディング ---
+  function setLoading(on) {
+    document.getElementById('loading-overlay').classList.toggle('active', on);
+  }
+
+  // --- マージキー: "YYYY-MM_項目名" ---
   function mergeKey(dateStr, item) {
     return dateStr.slice(0, 7) + '_' + item.trim();
   }
 
   // --- 日付フォーマット ---
   function formatDate(dateStr) {
-    // "2026-03-22" → "3月22日"
     const [, m, d] = dateStr.split('-');
     return `${parseInt(m)}月${parseInt(d)}日`;
   }
 
   function todayStr() {
     const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+
+  function escHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
   // --- UI ---
-  function renderList() {
-    const data = loadData();
+  function renderList(data) {
     const listArea = document.getElementById('list-area');
     const totalArea = document.getElementById('total-area');
 
@@ -442,7 +486,7 @@
             <div class="item-name">${escHtml(row.item)}${badgeHtml}</div>
           </td>
           <td>
-            <button class="btn-delete" data-idx="${idx}" aria-label="削除">✕</button>
+            <button class="btn-delete" data-key="${escHtml(row.key)}" aria-label="削除">✕</button>
           </td>
         </tr>`;
     });
@@ -466,20 +510,9 @@
         <span class="total-amount">¥${total.toLocaleString()}</span>
       </div>`;
 
-    // 削除ボタンイベント
     listArea.querySelectorAll('.btn-delete').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const idx = parseInt(btn.dataset.idx);
-        const data = loadData();
-        data.splice(idx, 1);
-        saveData(data);
-        renderList();
-      });
+      btn.addEventListener('click', () => handleDelete(btn.dataset.key));
     });
-  }
-
-  function escHtml(str) {
-    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
   // --- トースト ---
@@ -492,39 +525,51 @@
     toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
   }
 
-  // --- 追加 ---
-  document.getElementById('btn-add').addEventListener('click', () => {
-    const dateEl = document.getElementById('input-date');
-    const amountEl = document.getElementById('input-amount');
-    const itemEl = document.getElementById('input-item');
-
-    const dateVal = dateEl.value;
-    const amountVal = parseInt(amountEl.value);
-    const itemVal = itemEl.value.trim();
-
-    if (!dateVal) { showToast('日付を入力してください'); return; }
-    if (!amountVal || amountVal <= 0) { showToast('正しい金額を入力してください'); return; }
-    if (!itemVal) { showToast('項目を入力してください'); return; }
-
-    const data = loadData();
-    const key = mergeKey(dateVal, itemVal);
-    const existIdx = data.findIndex(r => r.key === key);
-
-    if (existIdx >= 0) {
-      data[existIdx].amounts.push(amountVal);
-      saveData(data);
-      renderList();
-      showToast(`「${itemVal}」にマージしました`);
-    } else {
-      data.push({ key, date: dateVal, item: itemVal, amounts: [amountVal] });
-      saveData(data);
-      renderList();
+  // --- データ取得 ---
+  async function fetchAndRender() {
+    setLoading(true);
+    try {
+      cachedData = await apiGet();
+      renderList(cachedData);
+    } catch (e) {
+      alert('データの取得に失敗しました。\n' + e.message);
+    } finally {
+      setLoading(false);
     }
+  }
 
-    amountEl.value = '';
-    itemEl.value = '';
-    // 日付はそのままにする（連続入力時の利便性）
-    amountEl.focus();
+  // --- 追加 ---
+  document.getElementById('btn-add').addEventListener('click', async () => {
+    const dateEl   = document.getElementById('input-date');
+    const amountEl = document.getElementById('input-amount');
+    const itemEl   = document.getElementById('input-item');
+
+    const dateVal   = dateEl.value;
+    const amountVal = parseInt(amountEl.value);
+    const itemVal   = itemEl.value.trim();
+
+    if (!dateVal)                      { showToast('日付を入力してください'); return; }
+    if (!amountVal || amountVal <= 0)  { showToast('正しい金額を入力してください'); return; }
+    if (!itemVal)                      { showToast('項目を入力してください'); return; }
+
+    const key = mergeKey(dateVal, itemVal);
+    const isMerge = cachedData.some(r => r.key === key);
+
+    setLoading(true);
+    try {
+      await apiPost({ action: 'add', key, date: dateVal, item: itemVal, amount: amountVal });
+      amountEl.value = '';
+      itemEl.value   = '';
+      amountEl.focus();
+      // GETで最新状態を取得
+      cachedData = await apiGet();
+      renderList(cachedData);
+      if (isMerge) showToast(`「${itemVal}」にマージしました`);
+    } catch (e) {
+      alert('保存に失敗しました。\n' + e.message);
+    } finally {
+      setLoading(false);
+    }
   });
 
   // Enterキーで追加
@@ -534,14 +579,26 @@
     });
   });
 
+  // --- 削除 ---
+  async function handleDelete(key) {
+    setLoading(true);
+    try {
+      await apiPost({ action: 'delete', key });
+      cachedData = await apiGet();
+      renderList(cachedData);
+    } catch (e) {
+      alert('削除に失敗しました。\n' + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   // --- コピーダイアログ ---
   document.getElementById('btn-copy').addEventListener('click', () => {
-    const data = loadData();
-    if (data.length === 0) { showToast('データがありません'); return; }
-
-    const total = data.reduce((s, r) => s + r.amounts.reduce((a, b) => a + b, 0), 0);
+    if (cachedData.length === 0) { showToast('データがありません'); return; }
+    const total = cachedData.reduce((s, r) => s + r.amounts.reduce((a, b) => a + b, 0), 0);
     document.getElementById('dialog-info').textContent =
-      `${data.length}件・合計 ¥${total.toLocaleString()} をコピーします。`;
+      `${cachedData.length}件・合計 ¥${total.toLocaleString()} をコピーします。`;
     document.getElementById('overlay').classList.add('active');
   });
 
@@ -549,22 +606,32 @@
     document.getElementById('overlay').classList.remove('active');
   });
 
-  document.getElementById('btn-confirm-delete').addEventListener('click', () => {
-    const data = loadData();
-    const tsv = data.map(r => {
+  document.getElementById('btn-confirm-delete').addEventListener('click', async () => {
+    const tsv = cachedData.map(r => {
       const sum = r.amounts.reduce((a, b) => a + b, 0);
       return `${formatDate(r.date)}\t¥${sum.toLocaleString()}\t${r.item}`;
     }).join('\n');
 
-    copyToClipboard(tsv).then(() => {
-      localStorage.removeItem(STORAGE_KEY);
-      renderList();
-      document.getElementById('overlay').classList.remove('active');
+    document.getElementById('overlay').classList.remove('active');
+
+    try {
+      await copyToClipboard(tsv);
+    } catch {
+      alert('クリップボードへのコピーに失敗しました。');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await apiPost({ action: 'clear' });
+      cachedData = await apiGet();
+      renderList(cachedData);
       showToast('コピーして削除しました');
-    }).catch(() => {
-      showToast('コピーに失敗しました');
-      document.getElementById('overlay').classList.remove('active');
-    });
+    } catch (e) {
+      alert('削除に失敗しました。\n' + e.message);
+    } finally {
+      setLoading(false);
+    }
   });
 
   // オーバーレイ外クリックで閉じる
@@ -579,7 +646,6 @@
     if (navigator.clipboard && navigator.clipboard.writeText) {
       return navigator.clipboard.writeText(text);
     }
-    // フォールバック
     return new Promise((resolve, reject) => {
       const ta = document.createElement('textarea');
       ta.value = text;
@@ -595,7 +661,7 @@
 
   // --- 初期化 ---
   document.getElementById('input-date').value = todayStr();
-  renderList();
+  fetchAndRender();
 </script>
 </body>
 </html>
