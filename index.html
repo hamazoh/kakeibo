@@ -599,7 +599,7 @@
 
     setLoading(true);
     try {
-      await apiCall({ action: 'add', date: dateVal, item: itemVal, amount: amountVal });
+      await apiCall({ action: 'add', date: dateVal, item: itemVal, amounts: amountVal });
       amountEl.value = '';
       itemEl.value   = '';
       amountEl.focus();
