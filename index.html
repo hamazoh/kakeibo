@@ -555,13 +555,15 @@
     toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
   }
 
-  // --- GASの二次元配列 → cachedData形式に変換 ---
+  // --- GASの二次元配列 → cachedData形式に変換（同月・同項目をrowMapでマージ） ---
   function parseRows(rows) {
     console.log('parseRows input:', JSON.stringify(rows));
     if (!Array.isArray(rows) || rows.length === 0) return [];
     if (rows.length === 1 && (!Array.isArray(rows[0]) || rows[0].length === 0)) return [];
 
-    const result = [];
+    const rowMap = {}; // key → { key, date, item, amounts }
+    const order  = []; // 挿入順を保持
+
     rows.forEach((row, i) => {
       try {
         if (!Array.isArray(row) || row.length < 3) {
@@ -569,7 +571,7 @@
           return;
         }
         // GASがDateオブジェクトを返す場合も含めてString()で変換
-        let dateStr = String(row[0]).trim();
+        let dateStr     = String(row[0]).trim();
         const item      = String(row[1]).trim();
         const detailStr = String(row[2]).trim();
 
@@ -588,11 +590,19 @@
           return;
         }
         const key = mergeKey(dateStr, item);
-        result.push({ key, date: dateStr, item, amounts });
+
+        if (rowMap[key]) {
+          // 同月・同項目が既にある → amountsを結合してマージ
+          rowMap[key].amounts = rowMap[key].amounts.concat(amounts);
+        } else {
+          rowMap[key] = { key, date: dateStr, item, amounts };
+          order.push(key);
+        }
       } catch (e) {
         console.log(`parseRows: row[${i}] skipped (error)`, e, row);
       }
     });
+    const result = order.map(k => rowMap[k]);
     console.log('parseRows result:', result);
     return result;
   }
