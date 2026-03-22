@@ -413,17 +413,35 @@
     return new Promise((resolve, reject) => {
       const callbackName = 'cb_' + Date.now() + '_' + Math.random().toString(36).slice(2);
       const script = document.createElement('script');
+      let settled = false;
+
+      const cleanup = () => {
+        if (window[callbackName]) delete window[callbackName];
+        if (script.parentNode) document.body.removeChild(script);
+      };
+
+      // タイムアウト（15秒）
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error('JSONP timeout'));
+      }, 15000);
 
       window[callbackName] = (data) => {
-        delete window[callbackName];
-        document.body.removeChild(script);
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        cleanup();
         resolve(data);
       };
 
       script.onerror = () => {
-        delete window[callbackName];
-        document.body.removeChild(script);
-        reject(new Error('JSONP request failed'));
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        cleanup();
+        reject(new Error('JSONP script load error'));
       };
 
       const query = Object.entries({ ...params, callback: callbackName })
@@ -431,6 +449,7 @@
         .join('&');
 
       script.src = API_URL + '?' + query;
+      console.log('apiCall:', script.src);
       document.body.appendChild(script);
     });
   }
@@ -538,19 +557,29 @@
 
   // --- GASの二次元配列 → cachedData形式に変換 ---
   function parseRows(rows) {
+    console.log('parseRows input:', JSON.stringify(rows));
     if (!Array.isArray(rows) || rows.length === 0) return [];
     if (rows.length === 1 && (!Array.isArray(rows[0]) || rows[0].length === 0)) return [];
 
     const result = [];
     rows.forEach((row, i) => {
       try {
-        if (!Array.isArray(row) || row.length < 4) {
+        if (!Array.isArray(row) || row.length < 3) {
           console.log(`parseRows: row[${i}] skipped (insufficient columns)`, row);
           return;
         }
-        const [dateStr, item, detailStr] = row;
-        if (typeof dateStr !== 'string' || typeof item !== 'string' || typeof detailStr !== 'string') {
-          console.log(`parseRows: row[${i}] skipped (unexpected types)`, row);
+        // GASがDateオブジェクトを返す場合も含めてString()で変換
+        let dateStr = String(row[0]).trim();
+        const item      = String(row[1]).trim();
+        const detailStr = String(row[2]).trim();
+
+        // ISO日付文字列 "2026-03-22T..." を "2026-03-22" に正規化
+        if (dateStr.length > 10 && dateStr[10] === 'T') {
+          dateStr = dateStr.slice(0, 10);
+        }
+
+        if (!dateStr || !item || !detailStr) {
+          console.log(`parseRows: row[${i}] skipped (empty fields)`, row);
           return;
         }
         const amounts = detailStr.split('+').map(s => parseInt(s, 10)).filter(n => !isNaN(n));
@@ -564,6 +593,7 @@
         console.log(`parseRows: row[${i}] skipped (error)`, e, row);
       }
     });
+    console.log('parseRows result:', result);
     return result;
   }
 
@@ -571,9 +601,12 @@
   async function fetchAndRender() {
     setLoading(true);
     try {
-      cachedData = parseRows(await apiCall({ action: 'get' }));
+      const raw = await apiCall({ action: 'get' });
+      console.log('fetchAndRender raw:', JSON.stringify(raw));
+      cachedData = parseRows(raw);
       renderList(cachedData);
     } catch (e) {
+      console.error('fetchAndRender error:', e);
       alert('データの取得に失敗しました。\n' + e.message);
     } finally {
       setLoading(false);
