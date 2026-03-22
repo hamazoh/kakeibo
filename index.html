@@ -425,22 +425,12 @@
   }
 
   async function apiPost(payload) {
-    // no-corsではContent-Type: application/jsonは禁止されているため
-    // text/plainで送信（GAS側はe.postData.contentsでJSONとして読める）
-    try {
-      const res = await fetch(API_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'data=' + encodeURIComponent(JSON.stringify(payload)),
-      });
-      console.log('apiPost success, type:', res.type);
-    } catch (e) {
-      console.error('apiPost fetch error:', e);
-      alert('POST送信エラー: ' + e.message);
-      throw e;
-    }
-    // no-corsではレスポンスが読めないため、GAS処理完了を待つ
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      redirect: 'follow'
+    });
     await new Promise(resolve => setTimeout(resolve, 1500));
   }
 
