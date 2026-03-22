@@ -424,13 +424,15 @@
     });
   }
 
-  function apiPost(payload) {
-    return fetch(API_URL, {
+  async function apiPost(payload) {
+    await fetch(API_URL, {
       method: 'POST',
       mode: 'no-cors',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    // no-corsではレスポンスが読めないため、GAS処理完了を待つ
+    await new Promise(resolve => setTimeout(resolve, 1000));
   }
 
   // --- ローディング ---
