@@ -341,6 +341,17 @@
     }
 
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* 保存ステータス */
+    .sync-status {
+      font-size: 12px;
+      color: #999;
+      text-align: center;
+      margin-top: 8px;
+      min-height: 16px;
+    }
+
+    .sync-status.error { color: #b00; }
   </style>
 </head>
 <body>
@@ -365,6 +376,7 @@
         </div>
       </div>
       <button class="btn-add" id="btn-add">追加する</button>
+      <div class="sync-status" id="sync-status"></div>
     </div>
 
     <!-- リスト -->
@@ -404,9 +416,22 @@
 
 <script>
   const API_URL = 'https://script.google.com/macros/s/AKfycbycNsvJQ9KZkEp22_dySkuUDuaBDEE7wFReKE7mUC_qti_Cj929-82Huj32RN6IbDxZuA/exec';
+  const LS_KEY = 'kakeibo_cache';
 
   // インメモリキャッシュ
   let cachedData = [];
+
+  // --- localStorage ---
+  function saveToLS(data) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch(e) {}
+  }
+
+  function loadFromLS() {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch(e) { return null; }
+  }
 
   // --- JSONP共通関数（すべてのAPIコールに使用） ---
   function apiCall(params) {
@@ -607,13 +632,44 @@
     return result;
   }
 
-  // --- データ取得 ---
+  // --- 保存ステータス ---
+  let syncTimer = null;
+  function setSyncStatus(state) {
+    const el = document.getElementById('sync-status');
+    if (state === 'saving') {
+      el.textContent = '保存中...';
+      el.className = 'sync-status';
+      if (syncTimer) clearTimeout(syncTimer);
+    } else if (state === 'done') {
+      el.textContent = '';
+      el.className = 'sync-status';
+    } else if (state === 'error') {
+      el.textContent = '保存失敗';
+      el.className = 'sync-status error';
+    }
+  }
+
+  // --- GASからバックグラウンドでデータ取得（ローディングなし） ---
+  async function refreshFromGAS() {
+    try {
+      const raw = await apiCall({ action: 'get' });
+      console.log('refreshFromGAS raw:', JSON.stringify(raw));
+      cachedData = parseRows(raw);
+      saveToLS(cachedData);
+      renderList(cachedData);
+    } catch(e) {
+      console.error('Background refresh failed:', e);
+    }
+  }
+
+  // --- データ取得（フルローディング付き） ---
   async function fetchAndRender() {
     setLoading(true);
     try {
       const raw = await apiCall({ action: 'get' });
       console.log('fetchAndRender raw:', JSON.stringify(raw));
       cachedData = parseRows(raw);
+      saveToLS(cachedData);
       renderList(cachedData);
     } catch (e) {
       console.error('fetchAndRender error:', e);
@@ -640,19 +696,30 @@
     const key = mergeKey(dateVal, itemVal);
     const isMerge = cachedData.some(r => r.key === key);
 
-    setLoading(true);
+    // 楽観的更新: GASの応答を待たずに即座に反映
+    const existing = cachedData.find(r => r.key === key);
+    if (existing) {
+      existing.amounts = [...existing.amounts, amountVal];
+    } else {
+      cachedData = [...cachedData, { key, date: dateVal, item: itemVal, amounts: [amountVal] }];
+    }
+    saveToLS(cachedData);
+    renderList(cachedData);
+
+    amountEl.value = '';
+    itemEl.value   = '';
+    amountEl.focus();
+    if (isMerge) showToast(`「${itemVal}」にマージしました`);
+
+    // バックグラウンドでGASに保存
+    setSyncStatus('saving');
     try {
       await apiCall({ action: 'add', date: dateVal, item: itemVal, amounts: amountVal });
-      amountEl.value = '';
-      itemEl.value   = '';
-      amountEl.focus();
-      cachedData = parseRows(await apiCall({ action: 'get' }));
-      renderList(cachedData);
-      if (isMerge) showToast(`「${itemVal}」にマージしました`);
+      setSyncStatus('done');
+      refreshFromGAS();
     } catch (e) {
-      alert('保存に失敗しました。\n' + e.message);
-    } finally {
-      setLoading(false);
+      setSyncStatus('error');
+      showToast('保存に失敗しました: ' + e.message);
     }
   });
 
@@ -669,6 +736,7 @@
     try {
       await apiCall({ action: 'delete', date, item });
       cachedData = parseRows(await apiCall({ action: 'get' }));
+      saveToLS(cachedData);
       renderList(cachedData);
     } catch (e) {
       alert('削除に失敗しました。\n' + e.message);
@@ -709,6 +777,7 @@
     try {
       await apiCall({ action: 'clear' });
       cachedData = parseRows(await apiCall({ action: 'get' }));
+      saveToLS(cachedData);
       renderList(cachedData);
       showToast('コピーして削除しました');
     } catch (e) {
@@ -745,7 +814,16 @@
 
   // --- 初期化 ---
   document.getElementById('input-date').value = todayStr();
-  fetchAndRender();
+
+  // まずlocalStorageから即座に表示し、バックグラウンドでGASと同期
+  const lsData = loadFromLS();
+  if (lsData && lsData.length > 0) {
+    cachedData = lsData;
+    renderList(cachedData);
+    refreshFromGAS();
+  } else {
+    fetchAndRender();
+  }
 </script>
 </body>
 </html>
