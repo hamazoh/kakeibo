@@ -833,19 +833,37 @@
           console.log(`parseRows: row[${i}] skipped (insufficient columns)`, row);
           return;
         }
-        let dateStr     = String(row[0]).trim();
-        const item      = String(row[1]).trim();
-        const detailStr = String(row[2]).trim();
+        let dateStr = String(row[0]).trim();
+        const item  = String(row[1]).trim();
 
+        // ISO datetime "2026-03-23T..." → "2026-03-23"
         if (dateStr.length > 10 && dateStr[10] === 'T') {
           dateStr = dateStr.slice(0, 10);
         }
+        // YYYY/MM/DD → YYYY-MM-DD
+        if (/^\d{4}\/\d{2}\/\d{2}$/.test(dateStr)) {
+          dateStr = dateStr.replace(/\//g, '-');
+        }
 
-        if (!dateStr || !item || !detailStr) {
-          console.log(`parseRows: row[${i}] skipped (empty fields)`, row);
+        // "YYYY-MM-DD" 形式でなければスキップ（ヘッダー行や不正値を除外）
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+          console.log(`parseRows: row[${i}] skipped (invalid date: ${dateStr})`, row);
           return;
         }
-        const amounts = detailStr.split('+').map(s => parseInt(s, 10)).filter(n => !isNaN(n));
+        if (!item) {
+          console.log(`parseRows: row[${i}] skipped (empty item)`, row);
+          return;
+        }
+
+        // amounts: 数値（新形式）or "500+800" 文字列（旧形式）の両方を処理
+        const rawAmount = row[2];
+        let amounts;
+        if (typeof rawAmount === 'number') {
+          amounts = !isNaN(rawAmount) && rawAmount > 0 ? [rawAmount] : [];
+        } else {
+          const detailStr = String(rawAmount).trim();
+          amounts = detailStr.split('+').map(s => parseInt(s, 10)).filter(n => !isNaN(n) && n > 0);
+        }
         if (amounts.length === 0) {
           console.log(`parseRows: row[${i}] skipped (no valid amounts)`, row);
           return;
