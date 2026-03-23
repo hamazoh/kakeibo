@@ -717,41 +717,19 @@
     if (!newAmount || newAmount <= 0) { showToast('正しい金額を入力してください'); return; }
     if (!newItem)                     { showToast('項目を入力してください'); return; }
 
-    // 変更前の状態を保存（エラー時のリバート用）
-    const prevData = JSON.parse(JSON.stringify(cachedData));
-
-    const newKey = mergeKey(newDate, newItem);
-    const idx    = cachedData.findIndex(r => r.key === key);
-    if (idx === -1) return;
-
-    const conflictIdx = cachedData.findIndex((r, i) => r.key === newKey && i !== idx);
-    if (conflictIdx !== -1) {
-      cachedData[conflictIdx].amounts = [...cachedData[conflictIdx].amounts, newAmount];
-      cachedData.splice(idx, 1);
-    } else {
-      cachedData[idx] = { key: newKey, date: newDate, item: newItem, amounts: [newAmount] };
-    }
-
-    // 楽観的更新
-    saveToLS(cachedData);
-    renderList(cachedData);
-    showToast('更新しました');
-
     // 進行中のGETレスポンスを無効化（レースコンディション防止）
     getGeneration++;
 
     setSyncStatus('saving');
     try {
+      // GAS側を先に更新（delete → add の順）
       await apiCall({ action: 'delete', date: oldDate, item: oldItem });
       await apiCall({ action: 'add',    date: newDate, item: newItem, amounts: String(newAmount) });
       setSyncStatus('done');
-      // GASから再取得してlocalStorageと整合性を保つ
+      showToast('更新しました');
+      // GAS更新完了後にlocalStorageと画面を更新
       refreshFromGAS();
     } catch(e) {
-      // GAS失敗時はlocalStorageを元に戻す
-      cachedData = prevData;
-      saveToLS(cachedData);
-      renderList(cachedData);
       setSyncStatus('error');
       showToast('更新の保存に失敗しました: ' + e.message);
     }
@@ -777,28 +755,21 @@
     const { date, item } = pendingDelete;
     pendingDelete = null;
 
-    // 変更前の状態を保存（エラー時のリバート用）
-    const prevData = JSON.parse(JSON.stringify(cachedData));
-
-    // 楽観的削除（UIを即座に更新）
-    cachedData = cachedData.filter(r => !(r.date === date && r.item === item));
-    saveToLS(cachedData);
-    renderList(cachedData);
     showToast('削除中...');
 
     // 進行中のGETレスポンスを無効化（レースコンディション防止）
     getGeneration++;
 
     try {
+      // GAS側を先に削除
       await apiCall({ action: 'delete', date, item });
-      showToast(`「${item}」を削除しました`);
-      // GASから再取得してlocalStorageと整合性を保つ
-      refreshFromGAS();
-    } catch(e) {
-      // GAS失敗時はlocalStorageを元に戻す
-      cachedData = prevData;
+      // GAS削除完了後にlocalStorageと画面を更新
+      cachedData = cachedData.filter(r => !(r.date === date && r.item === item));
       saveToLS(cachedData);
       renderList(cachedData);
+      showToast(`「${item}」を削除しました`);
+      refreshFromGAS();
+    } catch(e) {
       showToast('削除に失敗しました: ' + e.message);
     }
   });
