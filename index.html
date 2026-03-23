@@ -129,7 +129,7 @@
       border-bottom: 1px solid #eee;
     }
 
-    thead th:last-child { width: 28px; text-align: center; }
+    thead th:last-child { white-space: nowrap; text-align: center; }
 
     tbody tr {
       border-bottom: 1px solid #f0f0f0;
@@ -170,18 +170,69 @@
       font-weight: 600;
     }
 
-    .btn-delete {
+    /* アクションボタン列 */
+    .td-actions {
+      white-space: nowrap;
+      vertical-align: middle;
+      text-align: center;
+    }
+
+    .btn-delete,
+    .btn-edit {
       background: none;
       border: none;
       color: #bbb;
-      font-size: 18px;
+      font-size: 16px;
       cursor: pointer;
-      padding: 4px 6px;
+      padding: 4px 5px;
       line-height: 1;
       border-radius: 4px;
+      display: block;
     }
 
     .btn-delete:active { color: #e33; }
+    .btn-edit:active   { color: #185FA5; }
+
+    /* 編集行 */
+    .edit-row td { padding: 6px 3px; vertical-align: middle; }
+
+    .edit-row input[type="date"],
+    .edit-row input[type="number"],
+    .edit-row input[type="text"] {
+      height: 32px;
+      padding: 0 4px;
+      font-size: 13px;
+      width: 100%;
+      min-width: 0;
+    }
+
+    .edit-btns { display: flex; flex-direction: column; gap: 4px; }
+
+    .btn-edit-save {
+      background: #185FA5;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 5px 6px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .btn-edit-cancel {
+      background: #f0f0f0;
+      color: #555;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      padding: 5px 6px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .btn-edit-save:active  { opacity: 0.85; }
+    .btn-edit-cancel:active { opacity: 0.85; }
 
     .total-row {
       margin-top: 12px;
@@ -397,7 +448,20 @@
     <div class="spinner"></div>
   </div>
 
-  <!-- 確認ダイアログ -->
+  <!-- 削除確認ダイアログ -->
+  <div class="overlay" id="delete-overlay">
+    <div class="dialog">
+      <h2>削除の確認</h2>
+      <p class="dialog-info" id="delete-dialog-info"></p>
+      <p class="dialog-warn">この操作は元に戻せません。</p>
+      <div class="dialog-btns">
+        <button class="btn-cancel" id="delete-btn-cancel">キャンセル</button>
+        <button class="btn-confirm-delete" id="delete-btn-confirm">削除</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- コピーダイアログ -->
   <div class="overlay" id="overlay">
     <div class="dialog">
       <h2>エクセル用コピーして削除</h2>
@@ -433,7 +497,7 @@
     } catch(e) { return null; }
   }
 
-  // --- JSONP共通関数（すべてのAPIコールに使用） ---
+  // --- JSONP共通関数 ---
   function apiCall(params) {
     return new Promise((resolve, reject) => {
       const callbackName = 'cb_' + Date.now() + '_' + Math.random().toString(36).slice(2);
@@ -445,7 +509,6 @@
         if (script.parentNode) document.body.removeChild(script);
       };
 
-      // タイムアウト（15秒）
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
@@ -506,7 +569,7 @@
 
   // --- UI ---
   function renderList(data) {
-    const listArea = document.getElementById('list-area');
+    const listArea  = document.getElementById('list-area');
     const totalArea = document.getElementById('total-area');
 
     if (data.length === 0) {
@@ -531,7 +594,7 @@
         : '';
 
       rows += `
-        <tr>
+        <tr data-key="${escHtml(row.key)}">
           <td class="td-date">${formatDate(row.date)}</td>
           <td class="td-amount">
             <div class="amount-total">¥${sum.toLocaleString()}</div>
@@ -540,7 +603,8 @@
           <td class="td-item">
             <div class="item-name">${escHtml(row.item)}${badgeHtml}</div>
           </td>
-          <td>
+          <td class="td-actions">
+            <button class="btn-edit"   data-key="${escHtml(row.key)}"  aria-label="編集">✏</button>
             <button class="btn-delete" data-date="${escHtml(row.date)}" data-item="${escHtml(row.item)}" aria-label="削除">✕</button>
           </td>
         </tr>`;
@@ -566,9 +630,131 @@
       </div>`;
 
     listArea.querySelectorAll('.btn-delete').forEach(btn => {
-      btn.addEventListener('click', () => handleDelete(btn.dataset.date, btn.dataset.item));
+      btn.addEventListener('click', () => confirmDelete(btn.dataset.date, btn.dataset.item));
+    });
+
+    listArea.querySelectorAll('.btn-edit').forEach(btn => {
+      btn.addEventListener('click', () => editRow(btn.dataset.key));
     });
   }
+
+  // --- インライン編集 ---
+  function editRow(key) {
+    const row = cachedData.find(r => r.key === key);
+    if (!row) return;
+    const tr = document.querySelector(`tr[data-key="${CSS.escape(key)}"]`);
+    if (!tr) return;
+
+    const sum = row.amounts.reduce((a, b) => a + b, 0);
+    tr.classList.add('edit-row');
+    tr.innerHTML = `
+      <td><input type="date"   class="edit-date"   value="${escHtml(row.date)}"></td>
+      <td><input type="number" class="edit-amount" inputmode="numeric" value="${sum}" min="1"></td>
+      <td><input type="text"   class="edit-item"   value="${escHtml(row.item)}"></td>
+      <td>
+        <div class="edit-btns">
+          <button class="btn-edit-save">保存</button>
+          <button class="btn-edit-cancel">×</button>
+        </div>
+      </td>`;
+
+    tr.querySelector('.edit-item').focus();
+
+    tr.querySelector('.btn-edit-save').addEventListener('click', () => {
+      const newDate   = tr.querySelector('.edit-date').value;
+      const newAmount = parseInt(tr.querySelector('.edit-amount').value);
+      const newItem   = tr.querySelector('.edit-item').value.trim();
+      saveEdit(key, row.date, row.item, newDate, newItem, newAmount);
+    });
+
+    tr.querySelector('.btn-edit-cancel').addEventListener('click', () => {
+      renderList(cachedData);
+    });
+
+    // Enterキーで保存
+    tr.querySelectorAll('input').forEach(input => {
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') tr.querySelector('.btn-edit-save').click();
+        if (e.key === 'Escape') renderList(cachedData);
+      });
+    });
+  }
+
+  async function saveEdit(key, oldDate, oldItem, newDate, newItem, newAmount) {
+    if (!newDate)                    { showToast('日付を入力してください'); return; }
+    if (!newAmount || newAmount <= 0){ showToast('正しい金額を入力してください'); return; }
+    if (!newItem)                    { showToast('項目を入力してください'); return; }
+
+    const newKey = mergeKey(newDate, newItem);
+    const idx    = cachedData.findIndex(r => r.key === key);
+    if (idx === -1) return;
+
+    // 同月・同項目の別エントリが既にあればマージ、なければ置き換え
+    const conflictIdx = cachedData.findIndex((r, i) => r.key === newKey && i !== idx);
+    if (conflictIdx !== -1) {
+      cachedData[conflictIdx].amounts = [...cachedData[conflictIdx].amounts, newAmount];
+      cachedData.splice(idx, 1);
+    } else {
+      cachedData[idx] = { key: newKey, date: newDate, item: newItem, amounts: [newAmount] };
+    }
+
+    saveToLS(cachedData);
+    renderList(cachedData);
+    showToast('更新しました');
+
+    setSyncStatus('saving');
+    try {
+      await apiCall({ action: 'delete', date: oldDate, item: oldItem });
+      await apiCall({ action: 'add',    date: newDate, item: newItem, amounts: newAmount });
+      setSyncStatus('done');
+      refreshFromGAS();
+    } catch(e) {
+      setSyncStatus('error');
+      showToast('更新の保存に失敗しました: ' + e.message);
+    }
+  }
+
+  // --- 削除確認 ---
+  let pendingDelete = null;
+
+  function confirmDelete(date, item) {
+    pendingDelete = { date, item };
+    document.getElementById('delete-dialog-info').textContent = `「${item}」を削除しますか？`;
+    document.getElementById('delete-overlay').classList.add('active');
+  }
+
+  document.getElementById('delete-btn-cancel').addEventListener('click', () => {
+    document.getElementById('delete-overlay').classList.remove('active');
+    pendingDelete = null;
+  });
+
+  document.getElementById('delete-btn-confirm').addEventListener('click', async () => {
+    document.getElementById('delete-overlay').classList.remove('active');
+    if (!pendingDelete) return;
+    const { date, item } = pendingDelete;
+    pendingDelete = null;
+
+    // 楽観的削除
+    cachedData = cachedData.filter(r => !(r.date === date && r.item === item));
+    saveToLS(cachedData);
+    renderList(cachedData);
+    showToast(`「${item}」を削除しました`);
+
+    // バックグラウンドでGAS削除
+    try {
+      await apiCall({ action: 'delete', date, item });
+      refreshFromGAS();
+    } catch(e) {
+      showToast('削除の保存に失敗しました: ' + e.message);
+    }
+  });
+
+  document.getElementById('delete-overlay').addEventListener('click', e => {
+    if (e.target === document.getElementById('delete-overlay')) {
+      document.getElementById('delete-overlay').classList.remove('active');
+      pendingDelete = null;
+    }
+  });
 
   // --- トースト ---
   let toastTimer = null;
@@ -580,14 +766,14 @@
     toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
   }
 
-  // --- GASの二次元配列 → cachedData形式に変換（同月・同項目をrowMapでマージ） ---
+  // --- GASの二次元配列 → cachedData形式に変換 ---
   function parseRows(rows) {
     console.log('parseRows input:', JSON.stringify(rows));
     if (!Array.isArray(rows) || rows.length === 0) return [];
     if (rows.length === 1 && (!Array.isArray(rows[0]) || rows[0].length === 0)) return [];
 
-    const rowMap = {}; // key → { key, date, item, amounts }
-    const order  = []; // 挿入順を保持
+    const rowMap = {};
+    const order  = [];
 
     rows.forEach((row, i) => {
       try {
@@ -595,12 +781,10 @@
           console.log(`parseRows: row[${i}] skipped (insufficient columns)`, row);
           return;
         }
-        // GASがDateオブジェクトを返す場合も含めてString()で変換
         let dateStr     = String(row[0]).trim();
         const item      = String(row[1]).trim();
         const detailStr = String(row[2]).trim();
 
-        // ISO日付文字列 "2026-03-22T..." を "2026-03-22" に正規化
         if (dateStr.length > 10 && dateStr[10] === 'T') {
           dateStr = dateStr.slice(0, 10);
         }
@@ -617,7 +801,6 @@
         const key = mergeKey(dateStr, item);
 
         if (rowMap[key]) {
-          // 同月・同項目が既にある → amountsを結合してマージ
           rowMap[key].amounts = rowMap[key].amounts.concat(amounts);
         } else {
           rowMap[key] = { key, date: dateStr, item, amounts };
@@ -649,7 +832,7 @@
     }
   }
 
-  // --- GASからバックグラウンドでデータ取得（ローディングなし） ---
+  // --- GASからバックグラウンドで取得 ---
   async function refreshFromGAS() {
     try {
       const raw = await apiCall({ action: 'get' });
@@ -696,7 +879,7 @@
     const key = mergeKey(dateVal, itemVal);
     const isMerge = cachedData.some(r => r.key === key);
 
-    // 楽観的更新: GASの応答を待たずに即座に反映
+    // 楽観的更新
     const existing = cachedData.find(r => r.key === key);
     if (existing) {
       existing.amounts = [...existing.amounts, amountVal];
@@ -711,7 +894,6 @@
     amountEl.focus();
     if (isMerge) showToast(`「${itemVal}」にマージしました`);
 
-    // バックグラウンドでGASに保存
     setSyncStatus('saving');
     try {
       await apiCall({ action: 'add', date: dateVal, item: itemVal, amounts: amountVal });
@@ -729,21 +911,6 @@
       if (e.key === 'Enter') document.getElementById('btn-add').click();
     });
   });
-
-  // --- 削除 ---
-  async function handleDelete(date, item) {
-    setLoading(true);
-    try {
-      await apiCall({ action: 'delete', date, item });
-      cachedData = parseRows(await apiCall({ action: 'get' }));
-      saveToLS(cachedData);
-      renderList(cachedData);
-    } catch (e) {
-      alert('削除に失敗しました。\n' + e.message);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   // --- コピーダイアログ ---
   document.getElementById('btn-copy').addEventListener('click', () => {
@@ -787,7 +954,6 @@
     }
   });
 
-  // オーバーレイ外クリックで閉じる
   document.getElementById('overlay').addEventListener('click', e => {
     if (e.target === document.getElementById('overlay')) {
       document.getElementById('overlay').classList.remove('active');
@@ -815,7 +981,6 @@
   // --- 初期化 ---
   document.getElementById('input-date').value = todayStr();
 
-  // まずlocalStorageから即座に表示し、バックグラウンドでGASと同期
   const lsData = loadFromLS();
   if (lsData && lsData.length > 0) {
     cachedData = lsData;
