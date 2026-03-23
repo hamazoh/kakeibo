@@ -508,7 +508,9 @@
 
 <script>
   const API_URL = 'https://script.google.com/macros/s/AKfycbycNsvJQ9KZkEp22_dySkuUDuaBDEE7wFReKE7mUC_qti_Cj929-82Huj32RN6IbDxZuA/exec';
-  const LS_KEY  = 'kakeibo_cache';
+  const LS_KEY      = 'kakeibo_cache';
+  const LS_VER_KEY  = 'kakeibo_version';
+  const CACHE_VER   = '2';
 
   // インメモリキャッシュ
   let cachedData = [];
@@ -1141,6 +1143,13 @@
 
   // --- 初期化 ---
   document.getElementById('input-date').value = todayStr();
+
+  // バージョンが変わっていたらlocalStorageをクリア
+  if (localStorage.getItem(LS_VER_KEY) !== CACHE_VER) {
+    localStorage.removeItem(LS_KEY);
+    localStorage.setItem(LS_VER_KEY, CACHE_VER);
+    console.log('Cache cleared: version updated to', CACHE_VER);
+  }
 
   // キャッシュがあれば即座に表示（体感速度改善）
   const lsData = loadFromLS();
