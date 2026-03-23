@@ -741,7 +741,7 @@
     setSyncStatus('saving');
     try {
       await apiCall({ action: 'delete', date: oldDate, item: oldItem });
-      await apiCall({ action: 'add',    date: newDate, item: newItem, amounts: newAmount });
+      await apiCall({ action: 'add',    date: newDate, item: newItem, amounts: String(newAmount) });
       setSyncStatus('done');
       // GASから再取得してlocalStorageと整合性を保つ
       refreshFromGAS();
@@ -964,7 +964,7 @@
 
     setSyncStatus('saving');
     try {
-      await apiCall({ action: 'add', date: dateVal, item: itemVal, amounts: amountVal });
+      await apiCall({ action: 'add', date: dateVal, item: itemVal, amounts: String(amountVal) });
       setSyncStatus('done');
       refreshFromGAS();
     } catch (e) {
