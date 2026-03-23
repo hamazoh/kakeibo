@@ -772,14 +772,15 @@
     // 変更前の状態を保存（エラー時のリバート用）
     const prevData = JSON.parse(JSON.stringify(cachedData));
 
-    // 楽観的削除
+    // 楽観的削除（UIを即座に更新）
     cachedData = cachedData.filter(r => !(r.date === date && r.item === item));
     saveToLS(cachedData);
     renderList(cachedData);
-    showToast(`「${item}」を削除しました`);
+    showToast('削除中...');
 
     try {
       await apiCall({ action: 'delete', date, item });
+      showToast(`「${item}」を削除しました`);
       // GASから再取得してlocalStorageと整合性を保つ
       refreshFromGAS();
     } catch(e) {
@@ -787,7 +788,7 @@
       cachedData = prevData;
       saveToLS(cachedData);
       renderList(cachedData);
-      showToast('削除の保存に失敗しました: ' + e.message);
+      showToast('削除に失敗しました: ' + e.message);
     }
   });
 
