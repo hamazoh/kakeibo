@@ -403,9 +403,37 @@
     }
 
     .sync-status.error { color: #b00; }
+
+    /* プルトゥリフレッシュ */
+    .ptr-bar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 13px;
+      color: #888;
+      background: #e8f0fb;
+      transform: translateY(-100%);
+      transition: transform 0.2s ease;
+      z-index: 50;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .ptr-bar.visible  { transform: translateY(0); }
+    .ptr-bar.ready    { color: #185FA5; font-weight: 600; }
+    .ptr-bar.loading  { color: #185FA5; }
   </style>
 </head>
 <body>
+<!-- プルトゥリフレッシュバー -->
+<div class="ptr-bar" id="ptr-bar">↓ 引っ張って更新</div>
+
 <div id="app">
   <div class="container">
     <h1>家計簿メモ</h1>
@@ -480,7 +508,7 @@
 
 <script>
   const API_URL = 'https://script.google.com/macros/s/AKfycbycNsvJQ9KZkEp22_dySkuUDuaBDEE7wFReKE7mUC_qti_Cj929-82Huj32RN6IbDxZuA/exec';
-  const LS_KEY = 'kakeibo_cache';
+  const LS_KEY  = 'kakeibo_cache';
 
   // インメモリキャッシュ
   let cachedData = [];
@@ -671,25 +699,26 @@
       renderList(cachedData);
     });
 
-    // Enterキーで保存
     tr.querySelectorAll('input').forEach(input => {
       input.addEventListener('keydown', e => {
-        if (e.key === 'Enter') tr.querySelector('.btn-edit-save').click();
+        if (e.key === 'Enter')  tr.querySelector('.btn-edit-save').click();
         if (e.key === 'Escape') renderList(cachedData);
       });
     });
   }
 
   async function saveEdit(key, oldDate, oldItem, newDate, newItem, newAmount) {
-    if (!newDate)                    { showToast('日付を入力してください'); return; }
-    if (!newAmount || newAmount <= 0){ showToast('正しい金額を入力してください'); return; }
-    if (!newItem)                    { showToast('項目を入力してください'); return; }
+    if (!newDate)                     { showToast('日付を入力してください'); return; }
+    if (!newAmount || newAmount <= 0) { showToast('正しい金額を入力してください'); return; }
+    if (!newItem)                     { showToast('項目を入力してください'); return; }
+
+    // 変更前の状態を保存（エラー時のリバート用）
+    const prevData = JSON.parse(JSON.stringify(cachedData));
 
     const newKey = mergeKey(newDate, newItem);
     const idx    = cachedData.findIndex(r => r.key === key);
     if (idx === -1) return;
 
-    // 同月・同項目の別エントリが既にあればマージ、なければ置き換え
     const conflictIdx = cachedData.findIndex((r, i) => r.key === newKey && i !== idx);
     if (conflictIdx !== -1) {
       cachedData[conflictIdx].amounts = [...cachedData[conflictIdx].amounts, newAmount];
@@ -698,6 +727,7 @@
       cachedData[idx] = { key: newKey, date: newDate, item: newItem, amounts: [newAmount] };
     }
 
+    // 楽観的更新
     saveToLS(cachedData);
     renderList(cachedData);
     showToast('更新しました');
@@ -707,8 +737,13 @@
       await apiCall({ action: 'delete', date: oldDate, item: oldItem });
       await apiCall({ action: 'add',    date: newDate, item: newItem, amounts: newAmount });
       setSyncStatus('done');
+      // GASから再取得してlocalStorageと整合性を保つ
       refreshFromGAS();
     } catch(e) {
+      // GAS失敗時はlocalStorageを元に戻す
+      cachedData = prevData;
+      saveToLS(cachedData);
+      renderList(cachedData);
       setSyncStatus('error');
       showToast('更新の保存に失敗しました: ' + e.message);
     }
@@ -734,17 +769,24 @@
     const { date, item } = pendingDelete;
     pendingDelete = null;
 
+    // 変更前の状態を保存（エラー時のリバート用）
+    const prevData = JSON.parse(JSON.stringify(cachedData));
+
     // 楽観的削除
     cachedData = cachedData.filter(r => !(r.date === date && r.item === item));
     saveToLS(cachedData);
     renderList(cachedData);
     showToast(`「${item}」を削除しました`);
 
-    // バックグラウンドでGAS削除
     try {
       await apiCall({ action: 'delete', date, item });
+      // GASから再取得してlocalStorageと整合性を保つ
       refreshFromGAS();
     } catch(e) {
+      // GAS失敗時はlocalStorageを元に戻す
+      cachedData = prevData;
+      saveToLS(cachedData);
+      renderList(cachedData);
       showToast('削除の保存に失敗しました: ' + e.message);
     }
   });
@@ -832,7 +874,7 @@
     }
   }
 
-  // --- GASからバックグラウンドで取得 ---
+  // --- GASからバックグラウンドで再取得（常にlocalStorageを上書き） ---
   async function refreshFromGAS() {
     try {
       const raw = await apiCall({ action: 'get' });
@@ -842,10 +884,11 @@
       renderList(cachedData);
     } catch(e) {
       console.error('Background refresh failed:', e);
+      showToast('データの更新に失敗しました');
     }
   }
 
-  // --- データ取得（フルローディング付き） ---
+  // --- データ取得（フルローディング付き・常にGASから取得） ---
   async function fetchAndRender() {
     setLoading(true);
     try {
@@ -856,7 +899,7 @@
       renderList(cachedData);
     } catch (e) {
       console.error('fetchAndRender error:', e);
-      alert('データの取得に失敗しました。\n' + e.message);
+      showToast('データの取得に失敗しました');
     } finally {
       setLoading(false);
     }
@@ -876,7 +919,7 @@
     if (!amountVal || amountVal <= 0)  { showToast('正しい金額を入力してください'); return; }
     if (!itemVal)                      { showToast('項目を入力してください'); return; }
 
-    const key = mergeKey(dateVal, itemVal);
+    const key     = mergeKey(dateVal, itemVal);
     const isMerge = cachedData.some(r => r.key === key);
 
     // 楽観的更新
@@ -978,17 +1021,80 @@
     });
   }
 
+  // --- プルトゥリフレッシュ ---
+  (function initPTR() {
+    const PTR_THRESHOLD = 72; // 引っ張る距離（px）
+    const ptrBar = document.getElementById('ptr-bar');
+
+    let ptrStartY    = 0;
+    let ptrTracking  = false;
+    let ptrTriggered = false;
+    let ptrRefreshing = false;
+
+    document.addEventListener('touchstart', e => {
+      // ページ最上部にいるときだけ有効
+      if (window.scrollY !== 0 || ptrRefreshing) return;
+      // 入力欄のタッチは無視
+      if (e.target.closest('input, button, .overlay')) return;
+      ptrStartY   = e.touches[0].clientY;
+      ptrTracking = true;
+      ptrTriggered = false;
+    }, { passive: true });
+
+    document.addEventListener('touchmove', e => {
+      if (!ptrTracking || ptrRefreshing) return;
+      const delta = e.touches[0].clientY - ptrStartY;
+      if (delta <= 0) {
+        ptrBar.classList.remove('visible', 'ready');
+        return;
+      }
+      ptrBar.classList.add('visible');
+      if (delta >= PTR_THRESHOLD) {
+        ptrBar.textContent  = '↑ 離して更新';
+        ptrBar.classList.add('ready');
+        ptrTriggered = true;
+      } else {
+        ptrBar.textContent  = '↓ 引っ張って更新';
+        ptrBar.classList.remove('ready');
+        ptrTriggered = false;
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchend', async () => {
+      if (!ptrTracking) return;
+      ptrTracking = false;
+
+      if (!ptrTriggered) {
+        ptrBar.classList.remove('visible', 'ready');
+        return;
+      }
+
+      // リフレッシュ実行
+      ptrRefreshing = true;
+      ptrBar.textContent = '更新中...';
+      ptrBar.classList.remove('ready');
+      ptrBar.classList.add('loading');
+
+      await refreshFromGAS();
+
+      ptrRefreshing = false;
+      ptrTriggered  = false;
+      ptrBar.classList.remove('visible', 'ready', 'loading');
+      ptrBar.textContent = '↓ 引っ張って更新';
+    }, { passive: true });
+  })();
+
   // --- 初期化 ---
   document.getElementById('input-date').value = todayStr();
 
+  // キャッシュがあれば即座に表示（体感速度改善）
   const lsData = loadFromLS();
   if (lsData && lsData.length > 0) {
     cachedData = lsData;
     renderList(cachedData);
-    refreshFromGAS();
-  } else {
-    fetchAndRender();
   }
+  // 常にGASから最新データを取得してlocalStorageを上書き
+  fetchAndRender();
 </script>
 </body>
 </html>
