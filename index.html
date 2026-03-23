@@ -836,16 +836,28 @@
         let dateStr = String(row[0]).trim();
         const item  = String(row[1]).trim();
 
-        // ISO datetime "2026-03-23T..." → "2026-03-23"
-        if (dateStr.length > 10 && dateStr[10] === 'T') {
+        // 各種日付形式を "YYYY-MM-DD" に正規化
+        if (/^\d{4}-\d{2}-\d{2}T/.test(dateStr)) {
+          // ISO datetime: "2026-03-23T00:00:00.000Z" → "2026-03-23"
           dateStr = dateStr.slice(0, 10);
-        }
-        // YYYY/MM/DD → YYYY-MM-DD
-        if (/^\d{4}\/\d{2}\/\d{2}$/.test(dateStr)) {
-          dateStr = dateStr.replace(/\//g, '-');
+        } else if (/^\d{4}\/\d{2}\/\d{2}/.test(dateStr)) {
+          // YYYY/MM/DD → YYYY-MM-DD
+          dateStr = dateStr.slice(0, 10).replace(/\//g, '-');
+        } else if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+          // "Mon Mar 23 2026 00:00:00 GMT+0900 (日本標準時)" 等のDate.toString()形式
+          const d = new Date(dateStr);
+          if (!isNaN(d.getTime())) {
+            // タイムゾーンオフセットを文字列から抽出して正確に変換
+            const tzMatch = dateStr.match(/GMT([+-])(\d{2})(\d{2})/);
+            const offsetMin = tzMatch
+              ? (tzMatch[1] === '+' ? 1 : -1) * (parseInt(tzMatch[2]) * 60 + parseInt(tzMatch[3]))
+              : 0;
+            const adj = new Date(d.getTime() + offsetMin * 60000);
+            dateStr = `${adj.getUTCFullYear()}-${String(adj.getUTCMonth()+1).padStart(2,'0')}-${String(adj.getUTCDate()).padStart(2,'0')}`;
+          }
         }
 
-        // "YYYY-MM-DD" 形式でなければスキップ（ヘッダー行や不正値を除外）
+        // 最終バリデーション（ヘッダー行など不正値を除外）
         if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
           console.log(`parseRows: row[${i}] skipped (invalid date: ${dateStr})`, row);
           return;
