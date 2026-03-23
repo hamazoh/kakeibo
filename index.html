@@ -513,6 +513,9 @@
   // インメモリキャッシュ
   let cachedData = [];
 
+  // GETリクエストの世代番号（古いレスポンスを無視するためのカウンター）
+  let getGeneration = 0;
+
   // --- localStorage ---
   function saveToLS(data) {
     try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch(e) {}
@@ -732,6 +735,9 @@
     renderList(cachedData);
     showToast('更新しました');
 
+    // 進行中のGETレスポンスを無効化（レースコンディション防止）
+    getGeneration++;
+
     setSyncStatus('saving');
     try {
       await apiCall({ action: 'delete', date: oldDate, item: oldItem });
@@ -777,6 +783,9 @@
     saveToLS(cachedData);
     renderList(cachedData);
     showToast('削除中...');
+
+    // 進行中のGETレスポンスを無効化（レースコンディション防止）
+    getGeneration++;
 
     try {
       await apiCall({ action: 'delete', date, item });
@@ -877,13 +886,19 @@
 
   // --- GASからバックグラウンドで再取得（常にlocalStorageを上書き） ---
   async function refreshFromGAS() {
+    const myGen = ++getGeneration;
     try {
       const raw = await apiCall({ action: 'get' });
+      if (myGen !== getGeneration) {
+        console.log('refreshFromGAS: stale response discarded (gen mismatch)');
+        return;
+      }
       console.log('refreshFromGAS raw:', JSON.stringify(raw));
       cachedData = parseRows(raw);
       saveToLS(cachedData);
       renderList(cachedData);
     } catch(e) {
+      if (myGen !== getGeneration) return;
       console.error('Background refresh failed:', e);
       showToast('データの更新に失敗しました');
     }
@@ -891,14 +906,20 @@
 
   // --- データ取得（フルローディング付き・常にGASから取得） ---
   async function fetchAndRender() {
+    const myGen = ++getGeneration;
     setLoading(true);
     try {
       const raw = await apiCall({ action: 'get' });
+      if (myGen !== getGeneration) {
+        console.log('fetchAndRender: stale response discarded (gen mismatch)');
+        return;
+      }
       console.log('fetchAndRender raw:', JSON.stringify(raw));
       cachedData = parseRows(raw);
       saveToLS(cachedData);
       renderList(cachedData);
     } catch (e) {
+      if (myGen !== getGeneration) return;
       console.error('fetchAndRender error:', e);
       showToast('データの取得に失敗しました');
     } finally {
@@ -937,6 +958,9 @@
     itemEl.value   = '';
     amountEl.focus();
     if (isMerge) showToast(`「${itemVal}」にマージしました`);
+
+    // 進行中のGETレスポンスを無効化（レースコンディション防止）
+    getGeneration++;
 
     setSyncStatus('saving');
     try {
